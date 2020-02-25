@@ -1,0 +1,584 @@
+diff -urN kernel-4.9_default/drivers/base/cpu.c kernel-4.9/drivers/base/cpu.c
+--- kernel-4.9_default/drivers/base/cpu.c	2020-02-24 20:59:34.000000000 +0900
++++ kernel-4.9/drivers/base/cpu.c	2020-02-24 22:25:14.558133100 +0900
+@@ -169,9 +169,87 @@
+ }
+ static DEVICE_ATTR(crash_notes_size, 0400, show_crash_notes_size, NULL);
+ 
++// Global variables of relative performance
++u64 relative_performance[8][29];
++EXPORT_SYMBOL(relative_performance);
++
++/*
++ * This function is read() callback function of /sys/devices/system/cpu/[CPU ID]/rel_perf
++ */
++static ssize_t rel_perf_show(struct device *dev,
++				     struct device_attribute *attr,
++				     char *buf)
++{
++	int i;
++	int cpunum;
++	char str_out[2048];
++	ssize_t delta = 0;
++	int offset = 0;
++	struct cpu *cpu;
++	
++	// Get CPU number
++	cpu = container_of(dev, struct cpu, dev);
++	cpunum = cpu->dev.id;
++
++	// Print the relative performance for each operating frequency
++    for (i = 0; i < 29; i++) {
++		delta = sprintf(&str_out[offset], "%lu ",
++				(unsigned long int) relative_performance[cpunum][i]);
++		offset += delta;
++	}
++
++	return sprintf(buf, "%s\n", str_out);
++}
++
++/*
++ * This function is write() callback function of /sys/devices/system/cpu/[CPU ID]/rel_perf
++ */
++static ssize_t rel_perf_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count)
++{
++	struct cpu *cpu;
++	int cpunum;
++    int i;
++    int ret; 
++    int cnt = 0; 
++    char *token;
++    char *s;
++    char str_rp[1000];
++    long unsigned int int_rp[29] = {0,};
++
++	// Get CPU number
++	cpu = container_of(dev, struct cpu, dev);
++	cpunum = cpu->dev.id;
++
++    // Read the relative performance for each operating frequency
++    ret = sscanf(buf, "%s", str_rp);
++    s = str_rp;
++
++    // Split a string into tokens
++    while ((token = strsep(&s, ",")) != NULL) {
++        if (!*token)
++            continue;
++        // Convert a string to 'long unsigned int'
++        sscanf(token, "%lu", &int_rp[cnt]);
++        cnt++;
++    }    
++
++    // Check if the number of IBSRs == the number of available CPU frequency levels
++    if (cnt != 29)
++        return -EINVAL;
++
++    // Write the input IBSR into the task_struct of current task
++    for (i = 0; i < 29; i++) {
++      relative_performance[cpunum][i] = (u64) int_rp[i];
++    }    
++    return count; 
++}
++static DEVICE_ATTR_RW(rel_perf);
++
+ static struct attribute *crash_note_cpu_attrs[] = {
+ 	&dev_attr_crash_notes.attr,
+ 	&dev_attr_crash_notes_size.attr,
++	&dev_attr_rel_perf.attr,
+ 	NULL
+ };
+ 
+diff -urN kernel-4.9_default/fs/proc/base.c kernel-4.9/fs/proc/base.c
+--- kernel-4.9_default/fs/proc/base.c	2020-02-24 21:00:08.000000000 +0900
++++ kernel-4.9/fs/proc/base.c	2020-02-24 22:26:02.349499669 +0900
+@@ -1583,6 +1583,98 @@
+ 	.release	= single_release,
+ };
+ 
++/*
++ * This function is write() callback function of /proc/[pid]/ibsr
++ */
++static ssize_t ibsr_write(struct file *file, const char __user *buf,
++				size_t count, loff_t *offset)
++{
++	int i;
++    int cnt = 0;
++    char *token;
++    char *s;
++    long unsigned int int_ibsr[29] = {0,};
++	struct inode *inode = file_inode(file);
++	struct task_struct *p;
++	char str_ibsr[1800];
++	const size_t maxlen = sizeof(str_ibsr) - 1;
++	
++	memset(str_ibsr, 0, sizeof(str_ibsr));
++
++	// Read the IBSR for each operating frequency
++	if (copy_from_user(str_ibsr, buf, count > maxlen ? maxlen : count))
++		return -EFAULT;
++
++	// Get task_struct
++	p = get_proc_task(inode);
++	if (!p)
++		return -ESRCH;
++
++    s = str_ibsr;
++
++    // Split a string into tokens
++    while ((token = strsep(&s, ",")) != NULL) {
++        if (!*token)
++            continue;
++        // Convert a string to 'long unsigned int'
++        sscanf(token, "%lu", &int_ibsr[cnt]);
++        cnt++;
++    }
++
++    // Check if the number of IBSRs == the number of available CPU frequency levels
++    if (cnt != 29)
++        return -EINVAL;
++
++    // Write the input IBSR into the task_struct of current task
++    for (i = 0; i < 29; i++) {
++        p->ibsr[i] = (u64) int_ibsr[i];
++    }
++
++	put_task_struct(p);
++
++	return count;
++}
++
++/*
++ * This function is read() callback function of /proc/[pid]/ibsr
++ */
++static int ibsr_show(struct seq_file *m, void *v)
++{
++	int i;
++	struct inode *inode = m->private;
++	struct task_struct *p;
++
++	// Get task_struct
++	p = get_proc_task(inode);
++	if (!p)
++		return -ESRCH;
++
++	task_lock(p);
++	// Print the IBSR for each operating frequency
++    for (i = 0; i < 29; i++) {
++		seq_printf(m, "%lu ", (unsigned long int) p->ibsr[i]);
++    }
++	seq_printf(m, "\n");
++	task_unlock(p);
++
++	put_task_struct(p);
++
++	return 0;
++}
++
++static int ibsr_open(struct inode *inode, struct file *filp)
++{
++	return single_open(filp, ibsr_show, inode);
++}
++
++static const struct file_operations proc_ibsr_operations = {
++	.open		= ibsr_open,
++	.read		= seq_read,
++	.write		= ibsr_write,
++	.llseek		= seq_lseek,
++	.release	= single_release,
++};
++
+ static int proc_exe_link(struct dentry *dentry, struct path *exe_path)
+ {
+ 	struct task_struct *task;
+@@ -3129,6 +3221,7 @@
+ 	REG("weight",	  S_IRUGO|S_IWUSR, proc_task_weight_operations),
+ 	REG("largest_task", S_IRUGO, proc_largest_task_operations),
+ #endif
++	REG("ibsr", S_IRUGO|S_IWUSR, proc_ibsr_operations),
+ };
+ 
+ static int proc_tgid_base_readdir(struct file *file, struct dir_context *ctx)
+diff -urN kernel-4.9_default/include/linux/sched.h kernel-4.9/include/linux/sched.h
+--- kernel-4.9_default/include/linux/sched.h	2020-02-24 21:01:00.000000000 +0900
++++ kernel-4.9/include/linux/sched.h	2020-02-24 22:26:09.277406446 +0900
+@@ -2129,6 +2129,7 @@
+ 	/* A live task holds one reference. */
+ 	atomic_t stack_refcount;
+ #endif
++	u64 ibsr[29]; // 0 <= gamma <= 10000
+ /* CPU-specific state of this task */
+ 	struct thread_struct thread;
+ /*
+diff -urN kernel-4.9_default/kernel/fork.c kernel-4.9/kernel/fork.c
+--- kernel-4.9_default/kernel/fork.c	2020-02-24 21:01:22.000000000 +0900
++++ kernel-4.9/kernel/fork.c	2020-02-24 22:25:23.630014198 +0900
+@@ -1478,6 +1478,7 @@
+ {
+ 	int retval;
+ 	struct task_struct *p;
++	int i = 0;
+ 
+ 	if ((clone_flags & (CLONE_NEWNS|CLONE_FS)) == (CLONE_NEWNS|CLONE_FS))
+ 		return ERR_PTR(-EINVAL);
+@@ -1587,6 +1588,11 @@
+ 
+ 	p->default_timer_slack_ns = current->timer_slack_ns;
+ 
++	// Inherit the IBSR from the parent task
++	for (i = 0; i < 29; i++) {
++		p->ibsr[i] = current->ibsr[i];
++	}
++
+ 	task_io_accounting_init(&p->ioac);
+ 	acct_clear_integrals(p);
+ 
+diff -urN kernel-4.9_default/kernel/sched/fair.c kernel-4.9/kernel/sched/fair.c
+--- kernel-4.9_default/kernel/sched/fair.c	2020-02-24 21:02:12.000000000 +0900
++++ kernel-4.9/kernel/sched/fair.c	2020-02-24 22:25:45.981718539 +0900
+@@ -32,6 +32,8 @@
+ #include <linux/task_work.h>
+ #include <linux/module.h>
+ 
++#include <linux/cpufreq.h>
++
+ #include <trace/events/sched.h>
+ 
+ #include "sched.h"
+@@ -866,11 +868,283 @@
+ }
+ #endif /* CONFIG_SMP */
+ 
++unsigned int prev_cc[8] = {0,};
++unsigned int prev_bsc[8] = {0,};
++unsigned int delta_cc[8] = {0,};
++unsigned int delta_bsc[8] = {0,};
++
++// 0, 1, 2: CFS, SVR-CFS, ASVR-CFS (=mCFS)
++extern int mode_cfs;
++extern int is_init_pmu;
++
++static inline uint64_t read_pmu(uint32_t counterId) {
++    uint64_t r = 0;
++    asm volatile("msr pmselr_el0, %0" : : "r" (counterId)); // select counter number
++    asm volatile("mrs %0, pmxevcntr_el0" : "=r" (r));   // read from counter
++    return r;
++}
++unsigned int read_cc_32_pmu(void) {
++    return read_pmu(0);
++}
++unsigned int read_bsc_32_pmu(void) {
++    return read_pmu(1);
++}
++/*
++ * This function returns the current operating frequency index of this CPU core
++ * Input: none
++ * Output: current operating frequency index
++ */
++int cpufreq_quick_get_idx(void) {
++	int ret;
++	unsigned int cpufreq;
++	cpufreq = cpufreq_quick_get(smp_processor_id());
++	if (cpufreq == 2265600) {
++		ret = 28;
++	} else if (cpufreq == 2188800) {
++		ret = 27;
++	} else if (cpufreq == 2112000) {
++		ret = 26;
++	} else if (cpufreq == 2035200) {
++		ret = 25;
++	} else if (cpufreq == 1958400) {
++		ret = 24;
++	} else if (cpufreq == 1881600) {
++		ret = 23;
++	} else if (cpufreq == 1804800) {
++		ret = 22;
++	} else if (cpufreq == 1728000) {
++		ret = 21;
++	} else if (cpufreq == 1651200) {
++		ret = 20;
++	} else if (cpufreq == 1574400) {
++		ret = 19;
++	} else if (cpufreq == 1497600) {
++		ret = 18;
++	} else if (cpufreq == 1420800) {
++		ret = 17;
++	} else if (cpufreq == 1344000) {
++		ret = 16;
++	} else if (cpufreq == 1267200) {
++		ret = 15;
++	} else if (cpufreq == 1190400) {
++		ret = 14;
++	} else if (cpufreq == 1113600) {
++		ret = 13;
++	} else if (cpufreq == 1036800) {
++		ret = 12;
++	} else if (cpufreq == 960000) {
++		ret = 11;
++	} else if (cpufreq == 883200) {
++		ret = 10;
++	} else if (cpufreq == 806400) {
++		ret = 9;
++	} else if (cpufreq == 729600) {
++		ret = 8;
++	} else if (cpufreq == 652800) {
++		ret = 7;
++	} else if (cpufreq == 576000) {
++		ret = 6;
++	} else if (cpufreq == 499200) {
++		ret = 5;
++	} else if (cpufreq == 422400) {
++		ret = 4;
++	} else if (cpufreq == 345600) {
++		ret = 3;
++	} else if (cpufreq == 268800) {
++		ret = 2;
++	} else if (cpufreq == 192000) {
++		ret = 1;
++	} else if (cpufreq == 115200) {
++		ret = 0;
++	} else {
++		ret = 28;
++	}
++	return ret;
++}
++
++extern u64 relative_performance[8][29];
++
++/*
++ * This function scale the input time
++ * Input: time
++ * Output: time * relative performance
++ */
++u64 calc_scaled_time(u64 input_time) {
++	u64 ret;
++	u64 rf_idx = 0;
++	unsigned int cpufreq;
++	unsigned int cpu_id = smp_processor_id();
++
++	cpufreq = cpufreq_quick_get(smp_processor_id());
++	if (cpufreq == 2265600) {
++		rf_idx = 28;
++	} else if (cpufreq == 2188800) {
++		rf_idx = 27;
++	} else if (cpufreq == 2112000) {
++		rf_idx = 26;
++	} else if (cpufreq == 2035200) {
++		rf_idx = 25;
++	} else if (cpufreq == 1958400) {
++		rf_idx = 24;
++	} else if (cpufreq == 1881600) {
++		rf_idx = 23;
++	} else if (cpufreq == 1804800) {
++		rf_idx = 22;
++	} else if (cpufreq == 1728000) {
++		rf_idx = 21;
++	} else if (cpufreq == 1651200) {
++		rf_idx = 20;
++	} else if (cpufreq == 1574400) {
++		rf_idx = 19;
++	} else if (cpufreq == 1497600) {
++		rf_idx = 18;
++	} else if (cpufreq == 1420800) {
++		rf_idx = 17;
++	} else if (cpufreq == 1344000) {
++		rf_idx = 16;
++	} else if (cpufreq == 1267200) {
++		rf_idx = 15;
++	} else if (cpufreq == 1190400) {
++		rf_idx = 14;
++	} else if (cpufreq == 1113600) {
++		rf_idx = 13;
++	} else if (cpufreq == 1036800) {
++		rf_idx = 12;
++	} else if (cpufreq == 960000) {
++		rf_idx = 11;
++	} else if (cpufreq == 883200) {
++		rf_idx = 10;
++	} else if (cpufreq == 806400) {
++		rf_idx = 9;
++	} else if (cpufreq == 729600) {
++		rf_idx = 8;
++	} else if (cpufreq == 652800) {
++		rf_idx = 7;
++	} else if (cpufreq == 576000) {
++		rf_idx = 6;
++	} else if (cpufreq == 499200) {
++		rf_idx = 5;
++	} else if (cpufreq == 422400) {
++		rf_idx = 4;
++	} else if (cpufreq == 345600) {
++		rf_idx = 3;
++	} else if (cpufreq == 268800) {
++		rf_idx = 2;
++	} else if (cpufreq == 192000) {
++		rf_idx = 1;
++	} else if (cpufreq == 115200) {
++		rf_idx = 0;
++	} else {
++		rf_idx = 0;
++	}
++
++	if ((cpu_id < 0) || (cpu_id > 7)) {
++		return input_time;
++	}
++
++	// Calculate the scaled time
++	ret = input_time * relative_performance[cpu_id][rf_idx] / 10000;
++	return ret;
++}
++
++/*
++ * This function check the validaty of CPU cycle and backend stall cycle counts
++ * Input: CPU ID
++ * Output: 0 (not valid counts), 1 (valid counts)
++ */
++int is_valid_cc_bsc(unsigned int cpu_id) {
++	unsigned int cc, bsc;
++
++	// Read the last CPU cycle and backend stall cycle counts
++	cc = delta_cc[cpu_id];
++	bsc = delta_bsc[cpu_id];
++
++	if ((cc == 0) || (bsc == 0))
++		return 0;
++
++	if (cc < bsc)
++		return 0;
++
++	if ((cc > 10000000) || (bsc > 10000000))
++		return 0;
++	return 1;
++}
++
++/*
++ * This function actualize the input time
++ * Input: time, physical CPU time
++ * Output: time * effective CPU cycle counts / CPU cycle counts
++ */
++u64 calc_actualized_time(u64 input_time, u64 pcpu_time) {
++	unsigned int cpu_id = smp_processor_id();
++	u64 intrinsic_bsc;
++	u64 measured_bsc;
++	u64 mem_related_bsc;
++	u64 measured_cc;
++	u64 effective_cc;
++	u64 ret;
++
++	if (is_valid_cc_bsc(cpu_id)) {
++		// Calculate intrinsic backend stall cycle counts by using IBSR
++		intrinsic_bsc = ((u64)current->ibsr[cpufreq_quick_get_idx()]) * pcpu_time / (u64)1000;
++		// Read the backend stall cycle counts from PMU
++		measured_bsc = (u64) delta_bsc[cpu_id];
++		
++		// Calculate the genuine memory-related intererence backend stall cycle counts
++		mem_related_bsc = measured_bsc - intrinsic_bsc;
++
++		// Read the CPU cycle counts from PMU
++		measured_cc = (u64) delta_cc[cpu_id];
++
++		// Calculate effective CPU cycle counts
++		effective_cc = measured_cc - mem_related_bsc;
++
++		// Calculate the actualized time
++		ret = input_time * effective_cc / measured_cc;
++		return ret;
++	}
++	return input_time;
++}
++
++/*
++ * This function updates CPU cycle and backend stall cycle counts
++ */
++void update_cc_bsc(struct cfs_rq * cfs_rq, struct task_struct * curtask) {
++	unsigned int cpu_id = smp_processor_id();
++	unsigned int cur_cc = 0;
++	unsigned int cur_bsc = 0;
++
++	if (likely(is_init_pmu)) {
++		// Read current CPU cycle and backend stall cycle counts from PMU
++		cur_cc = read_cc_32_pmu();
++		cur_bsc = read_bsc_32_pmu();
++
++		if (curtask->ibsr) {
++			// If a current task is QoS task, updates the counts
++			delta_cc[cpu_id] = cur_cc - prev_cc[cpu_id];
++			delta_bsc[cpu_id] = cur_bsc - prev_bsc[cpu_id];
++		} else {
++			// If a current task is best-effor task, set 0
++			delta_cc[cpu_id] = 0;
++			delta_bsc[cpu_id] = 0;
++		}
++
++		// Update previous CPU cycle and backend stall cycle counts
++		prev_cc[cpu_id] = cur_cc;
++		prev_bsc[cpu_id] = cur_bsc;
++	}
++}
++
+ /*
+  * Update the current task's runtime statistics.
+  */
+ static void update_curr(struct cfs_rq *cfs_rq)
+ {
++	u64 delta_vr = 0;
++	u64 vr = 0;
++	u64 svr = 0;
++	u64 asvr = 0;
++	unsigned int cpu_id = smp_processor_id();
+ 	struct sched_entity *curr = cfs_rq->curr;
+ 	u64 now = rq_clock_task(rq_of(cfs_rq));
+ 	u64 delta_exec;
+@@ -890,6 +1164,52 @@
+ 	curr->sum_exec_runtime += delta_exec;
+ 	schedstat_add(cfs_rq->exec_clock, delta_exec);
+ 
++	// Scheduling tick handler updates virtual runtime of a current task and its cgroups
++	// For a given cgroup hierarchy, update_curr() is invoked many times.
++	// In the first step, update_curr() is invoked for a current 'task'.
++	// After that, update_curr() is invoked again for its cgroups.
++	// In this situation, PMU should be updated once for a given scheduling tick.
++	// To do so, mCFS updates PMU when update_curr() is invoked for a current 'task'.
++
++	// Check whether sched_entity 'curr' is task or not.
++	if (entity_is_task(curr)) {
++		struct task_struct *curtask = task_of(curr);
++		update_cc_bsc(cfs_rq, curtask);
++	}
++
++
++	// mode_cfs == 2: ASVR-CFS (=mCFS)
++	// mode_cfs == 1: SVR-CFS
++	// mode_cfs == 0: Original CFS
++
++	// calc_actualized_time(): added function for mCFS
++	// calc_scaled_time(): added function for mCFS
++	// calc_delta_fair(): original function
++	
++	u64 act, asct, asvr, sct, svr, vr;
++	if (likely(is_init_pmu)) {
++		if (likely(mode_cfs == 2)) {
++			// Calculate actualized CPU time
++			act = calc_actualized_time(delta_exec, delta_exec);
++			// Calculate actualized scaled CPU time
++			asct = calc_scaled_time(act);
++			// Calculate actualized scaled virtual runtime
++			asvr = cacl_delta_fair(asct, curr);
++			delta_vr = asvr;
++		} else if (mode_cfs == 1) {
++			// Calculate scaled CPU time
++			sct = calc_scaled_time(delta_exec);
++			// Calculate scaled virtual runtime
++			svr = calc_delta_fair(sct, curr);
++			delta_vr = svr;
++		} else {
++			// Use default virtual runtime
++			vr = calc_delta_fair(delta_exec, curr);
++			delta_vr = vr;
++		}
++	}
++
++	curr->vruntime += delta_vr;
+ 	update_min_vruntime(cfs_rq);
+ 
+ 	if (entity_is_task(curr)) {
