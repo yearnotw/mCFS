@@ -89,6 +89,121 @@ diff -urN kernel-4.9_default/drivers/base/cpu.c kernel-4.9/drivers/base/cpu.c
  	NULL
  };
  
+diff -urN kernel-4.9_default/drivers/cpufreq/cpufreq.c kernel-4.9/drivers/cpufreq/cpufreq.c
+--- kernel-4.9_default/drivers/cpufreq/cpufreq.c	2020-03-01 21:25:11.204472931 +0900
++++ kernel-4.9/drivers/cpufreq/cpufreq.c	2020-03-01 21:23:50.598119859 +0900
+@@ -891,6 +891,95 @@
+ 	return ret;
+ }
+ 
++extern int is_init_pmu;
++#define ARMV8_PMEVTYPER_P              (1 << 31) /* EL1 modes filtering bit */
++#define ARMV8_PMEVTYPER_U              (1 << 30) /* EL0 filtering bit */
++#define ARMV8_PMEVTYPER_NSK            (1 << 29) /* Non-secure EL1 (kernel) modes filtering bit */
++#define ARMV8_PMEVTYPER_NSU            (1 << 28) /* Non-secure User mode filtering bit */
++#define ARMV8_PMEVTYPER_NSH            (1 << 27) /* Non-secure Hyp modes filtering bit */
++#define ARMV8_PMEVTYPER_M              (1 << 26) /* Secure EL3 filtering bit */
++#define ARMV8_PMEVTYPER_MT             (1 << 25) /* Multithreading */
++#define ARMV8_PMEVTYPER_EVTCOUNT_MASK  0x3ff
++
++#define ARMV8_PMUSERENR_EN_EL0  (1 << 0) /* EL0 access enable */
++#define ARMV8_PMUSERENR_CR      (1 << 2) /* Cycle counter read enable */
++#define ARMV8_PMUSERENR_ER      (1 << 3) /* Event counter read enable */
++#define ARMV8_PMCNTENSET_EL0_ENABLE (1<<31) /**< Enable Perf count reg */
++#define ARMV8_PMCR_E            (1 << 0) /* Enable all counters */
++#define ARMV8_PMCR_P            (1 << 1) /* Reset all counters */
++#define ARMV8_PMCR_C            (1 << 2) /* Cycle counter reset */
++
++static inline void init_pmu(void) {
++    u64 val = 0;
++    // Start of per-core PMU profiling
++    /* Enable user-mode access to counters. */
++    asm volatile("msr pmuserenr_el0, %0" : : "r" ((u64)ARMV8_PMUSERENR_EN_EL0|ARMV8_PMUSERENR_ER|ARMV8_PMUSERENR_CR));
++    /* Performance Monitors Count Enable Set register bit 30:0 disable, 31 enable. Can also enable other event counters here. */
++    asm volatile("msr pmcntenset_el0, %0" : : "r" (ARMV8_PMCNTENSET_EL0_ENABLE));
++
++    /* Enable counters */
++    asm volatile("mrs %0, pmcr_el0" : "=r" (val));
++    asm volatile("msr pmcr_el0, %0" : : "r" (val|ARMV8_PMCR_E));
++}
++
++static void disable_all_pmu(void) {
++    /*   Performance Monitors Count Enable Set register: clear bit 0 */
++    asm volatile("msr pmcntenset_el0, %0" : : "r" (0)); // disable all pmu counters
++}
++
++static inline void enable_pmu(uint32_t evtCount, uint32_t counterId) {
++    uint32_t r = 0;
++    evtCount &= ARMV8_PMEVTYPER_EVTCOUNT_MASK;
++    asm volatile("isb");
++
++    asm volatile("msr pmselr_el0, %0" : : "r" (counterId)); // select counter number
++
++    asm volatile("msr pmxevtyper_el0, %0" : : "r" (evtCount));  // select event id
++
++    /* enables counter */
++    asm volatile("mrs %0, pmcntenset_el0" : "=r" (r));
++    asm volatile("msr pmcntenset_el0, %0" : : "r" (r|(1<<counterId)));
++}
++
++static void init_pmu_single_core(void *data) {
++    init_pmu();
++    disable_all_pmu();
++    enable_pmu(0x11, 0); // The number of CPU cycles
++    enable_pmu(0x24, 1); // The number of backend stall cycles
++}
++
++/**
++ * This function prints whether the PMU is initialized or not
++ */
++static ssize_t show_pmu_init(struct cpufreq_policy *policy, char *buf)
++{
++	if (is_init_pmu) {
++		return sprintf(buf, "PMU is initialized\n");
++	} else {
++		return sprintf(buf, "PMU is not initialized\n");
++	}
++	return -EINVAL;
++}
++
++/**
++ * This function initialize PMUs of all cores
++ */
++static ssize_t store_pmu_init(struct cpufreq_policy *policy,
++					const char *buf, size_t count)
++{
++	int ret;
++	char str_in[100];
++	// Read the list of ibsrs of launcher
++	ret = sscanf(buf, "%s", str_in);
++
++	if (!strcmp(str_in, "on")) {
++		on_each_cpu(init_pmu_single_core, NULL, 1);
++		is_init_pmu = 1;
++		return ret;
++	}
++
++	return -EINVAL;
++}
+ // rtoslab end
+ 
+ /**
+@@ -1018,6 +1107,7 @@
+ // rtoslab start
+ cpufreq_freq_attr_rw(ibsr);
+ cpufreq_freq_attr_rw(rel_pf);
++cpufreq_freq_attr_rw(pmu_init);
+ // rtoslab end
+ 
+ static struct attribute *default_attrs[] = {
+@@ -1035,6 +1125,7 @@
+ 	// rtoslab start
+ 	&ibsr.attr,
+ 	&rel_pf.attr,
++	&pmu_init.attr,
+ 	// rtoslb end
+ 	NULL
+ };
 diff -urN kernel-4.9_default/fs/proc/base.c kernel-4.9/fs/proc/base.c
 --- kernel-4.9_default/fs/proc/base.c	2020-02-24 21:00:08.000000000 +0900
 +++ kernel-4.9/fs/proc/base.c	2020-02-24 22:26:02.349499669 +0900
