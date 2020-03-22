@@ -90,9 +90,9 @@ diff -urN kernel-4.9_default/drivers/base/cpu.c kernel-4.9/drivers/base/cpu.c
  };
  
 diff -urN kernel-4.9_default/drivers/cpufreq/cpufreq.c kernel-4.9/drivers/cpufreq/cpufreq.c
---- kernel-4.9_default/drivers/cpufreq/cpufreq.c	2020-03-01 21:25:11.204472931 +0900
-+++ kernel-4.9/drivers/cpufreq/cpufreq.c	2020-03-01 21:23:50.598119859 +0900
-@@ -891,6 +891,95 @@
+--- kernel-4.9_default/drivers/cpufreq/cpufreq.c	2020-03-22 19:22:26.201356485 +0900
++++ kernel-4.9/drivers/cpufreq/cpufreq.c	2020-03-22 19:23:30.880118736 +0900
+@@ -890,6 +890,95 @@
  	return ret;
  }
  
@@ -185,29 +185,29 @@ diff -urN kernel-4.9_default/drivers/cpufreq/cpufreq.c kernel-4.9/drivers/cpufre
 +
 +	return -EINVAL;
 +}
- // rtoslab end
  
  /**
-@@ -1018,6 +1107,7 @@
- // rtoslab start
+  * show_scaling_driver - show the cpufreq driver currently loaded
+@@ -1015,6 +1104,7 @@
+ cpufreq_freq_attr_rw(scaling_setspeed);
  cpufreq_freq_attr_rw(ibsr);
  cpufreq_freq_attr_rw(rel_pf);
 +cpufreq_freq_attr_rw(pmu_init);
- // rtoslab end
  
  static struct attribute *default_attrs[] = {
-@@ -1035,6 +1125,7 @@
- 	// rtoslab start
+ 	&cpuinfo_min_freq.attr,
+@@ -1030,6 +1120,7 @@
+ 	&scaling_setspeed.attr,
  	&ibsr.attr,
  	&rel_pf.attr,
 +	&pmu_init.attr,
- 	// rtoslb end
  	NULL
  };
+ 
 diff -urN kernel-4.9_default/fs/proc/base.c kernel-4.9/fs/proc/base.c
 --- kernel-4.9_default/fs/proc/base.c	2020-02-24 21:00:08.000000000 +0900
-+++ kernel-4.9/fs/proc/base.c	2020-02-24 22:26:02.349499669 +0900
-@@ -1583,6 +1583,98 @@
++++ kernel-4.9/fs/proc/base.c	2020-03-22 19:07:33.161811620 +0900
+@@ -1583,6 +1583,160 @@
  	.release	= single_release,
  };
  
@@ -303,31 +303,109 @@ diff -urN kernel-4.9_default/fs/proc/base.c kernel-4.9/fs/proc/base.c
 +	.release	= single_release,
 +};
 +
++/*
++ * This function is write() callback function of /proc/[pid]/is_trace_sched_tick
++ */
++static ssize_t is_trace_sched_tick_write(struct file *file, const char __user *buf,
++		size_t count, loff_t *offset)
++{
++	struct inode *inode = file_inode(file);
++	struct task_struct *p;
++
++	unsigned int val;
++	int ret;
++	ret= kstrtouint_from_user(buf, count, 0, &val);
++
++	// Get task_struct
++	p = get_proc_task(inode);
++	if (!p)
++		return -ESRCH;
++
++	if (val == 1) {
++		p->is_trace_sched_tick = 1;
++	}
++	printk("RTOS || is_trace_sched_tick ON\n");
++	put_task_struct(p);
++
++	return count;
++}
++
++/*
++ * This function is read() callback function of /proc/[pid]/is_trace_sched_tick
++ */
++static int is_trace_sched_tick_show(struct seq_file *m, void *v)
++{
++	struct inode *inode = m->private;
++	struct task_struct *p;
++
++	// Get task_struct
++	p = get_proc_task(inode);
++	if (!p)
++		return -ESRCH;
++
++	task_lock(p);
++	seq_printf(m, "%lu ", (unsigned long int) p->is_trace_sched_tick);
++	seq_printf(m, "\n");
++	task_unlock(p);
++
++	put_task_struct(p);
++
++	return 0;
++}
++
++static int is_trace_sched_tick_open(struct inode *inode, struct file *filp) {
++	return single_open(filp, is_trace_sched_tick_show, inode);
++}
++
++static const struct file_operations proc_is_trace_sched_tick_operations = {
++	.open       = is_trace_sched_tick_open,
++	.read       = seq_read,
++	.write      = is_trace_sched_tick_write,
++	.llseek     = seq_lseek,
++	.release    = single_release,
++};
++
  static int proc_exe_link(struct dentry *dentry, struct path *exe_path)
  {
  	struct task_struct *task;
-@@ -3129,6 +3221,7 @@
+@@ -3129,6 +3283,8 @@
  	REG("weight",	  S_IRUGO|S_IWUSR, proc_task_weight_operations),
  	REG("largest_task", S_IRUGO, proc_largest_task_operations),
  #endif
 +	REG("ibsr", S_IRUGO|S_IWUSR, proc_ibsr_operations),
++	REG("is_trace_sched_tick", S_IRUGO|S_IWUSR, proc_is_trace_sched_tick_operations),
  };
  
  static int proc_tgid_base_readdir(struct file *file, struct dir_context *ctx)
 diff -urN kernel-4.9_default/include/linux/sched.h kernel-4.9/include/linux/sched.h
 --- kernel-4.9_default/include/linux/sched.h	2020-02-24 21:01:00.000000000 +0900
-+++ kernel-4.9/include/linux/sched.h	2020-02-24 22:26:09.277406446 +0900
-@@ -2129,6 +2129,7 @@
++++ kernel-4.9/include/linux/sched.h	2020-03-22 19:09:50.867402217 +0900
+@@ -2129,6 +2129,8 @@
  	/* A live task holds one reference. */
  	atomic_t stack_refcount;
  #endif
 +	u64 ibsr[29]; // 0 <= gamma <= 10000
++	int is_trace_sched_tick;
  /* CPU-specific state of this task */
  	struct thread_struct thread;
  /*
+diff -urN kernel-4.9_default/kernel/exit.c kernel-4.9/kernel/exit.c
+--- kernel-4.9_default/kernel/exit.c	2020-03-22 19:19:08.773112333 +0900
++++ kernel-4.9/kernel/exit.c	2020-03-22 19:18:42.197614821 +0900
+@@ -821,6 +821,10 @@
+ 
+ 	if (group_dead)
+ 		acct_process();
++	if(current->is_trace_sched_tick == 1) {
++		printk("RTOS || %d\t%s\t%llu\n",
++				current->pid, current->comm, current->num_sched_tick);
++	}
+ 	trace_sched_process_exit(tsk);
+ 
+ 	exit_sem(tsk);
 diff -urN kernel-4.9_default/kernel/fork.c kernel-4.9/kernel/fork.c
 --- kernel-4.9_default/kernel/fork.c	2020-02-24 21:01:22.000000000 +0900
-+++ kernel-4.9/kernel/fork.c	2020-02-24 22:25:23.630014198 +0900
++++ kernel-4.9/kernel/fork.c	2020-03-22 19:10:46.986400542 +0900
 @@ -1478,6 +1478,7 @@
  {
  	int retval;
@@ -336,7 +414,7 @@ diff -urN kernel-4.9_default/kernel/fork.c kernel-4.9/kernel/fork.c
  
  	if ((clone_flags & (CLONE_NEWNS|CLONE_FS)) == (CLONE_NEWNS|CLONE_FS))
  		return ERR_PTR(-EINVAL);
-@@ -1587,6 +1588,11 @@
+@@ -1587,6 +1588,12 @@
  
  	p->default_timer_slack_ns = current->timer_slack_ns;
  
@@ -344,13 +422,14 @@ diff -urN kernel-4.9_default/kernel/fork.c kernel-4.9/kernel/fork.c
 +	for (i = 0; i < 29; i++) {
 +		p->ibsr[i] = current->ibsr[i];
 +	}
++	p->is_trace_sched_tick = current->is_trace_sched_tick;
 +
  	task_io_accounting_init(&p->ioac);
  	acct_clear_integrals(p);
  
 diff -urN kernel-4.9_default/kernel/sched/fair.c kernel-4.9/kernel/sched/fair.c
 --- kernel-4.9_default/kernel/sched/fair.c	2020-02-24 21:02:12.000000000 +0900
-+++ kernel-4.9/kernel/sched/fair.c	2020-02-24 22:25:45.981718539 +0900
++++ kernel-4.9/kernel/sched/fair.c	2020-03-22 19:08:47.932512603 +0900
 @@ -32,6 +32,8 @@
  #include <linux/task_work.h>
  #include <linux/module.h>
@@ -697,3 +776,14 @@ diff -urN kernel-4.9_default/kernel/sched/fair.c kernel-4.9/kernel/sched/fair.c
  	update_min_vruntime(cfs_rq);
  
  	if (entity_is_task(curr)) {
+@@ -10535,6 +10855,10 @@
+ 	struct cfs_rq *cfs_rq;
+ 	struct sched_entity *se = &curr->se;
+ 
++	if (curr->is_trace_sched_tick) {
++		curr->num_sched_tick++;
++	}
++
+ 	for_each_sched_entity(se) {
+ 		cfs_rq = cfs_rq_of(se);
+ 		entity_tick(cfs_rq, se, queued);
