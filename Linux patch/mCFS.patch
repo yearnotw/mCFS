@@ -1,10 +1,10 @@
-diff -urN kernel-4.9_default/drivers/base/cpu.c kernel-4.9/drivers/base/cpu.c
---- kernel-4.9_default/drivers/base/cpu.c	2020-02-24 20:59:34.000000000 +0900
-+++ kernel-4.9/drivers/base/cpu.c	2020-02-24 22:25:14.558133100 +0900
-@@ -169,9 +169,87 @@
+diff -urN kernel-4.9/drivers/base/cpu.c kernel-4.9_modified/drivers/base/cpu.c
+--- kernel-4.9/drivers/base/cpu.c   2018-10-30 03:41:01.000000000 +0900
++++ kernel-4.9_modified/drivers/base/cpu.c  2020-04-12 20:46:11.150391288 +0900
+@@ -169,9 +169,88 @@
  }
  static DEVICE_ATTR(crash_notes_size, 0400, show_crash_notes_size, NULL);
- 
+
 +// Global variables of relative performance
 +u64 relative_performance[8][29];
 +EXPORT_SYMBOL(relative_performance);
@@ -13,90 +13,100 @@ diff -urN kernel-4.9_default/drivers/base/cpu.c kernel-4.9/drivers/base/cpu.c
 + * This function is read() callback function of /sys/devices/system/cpu/[CPU ID]/rel_perf
 + */
 +static ssize_t rel_perf_show(struct device *dev,
-+				     struct device_attribute *attr,
-+				     char *buf)
++       struct device_attribute *attr,
++       char *buf)
 +{
-+	int i;
-+	int cpunum;
-+	char str_out[2048];
-+	ssize_t delta = 0;
-+	int offset = 0;
-+	struct cpu *cpu;
-+	
-+	// Get CPU number
-+	cpu = container_of(dev, struct cpu, dev);
-+	cpunum = cpu->dev.id;
++   int i;
++   int cpunum;
++   char str_out[2048];
++   ssize_t delta = 0;
++   int offset = 0;
++   struct cpu *cpu;
 +
-+	// Print the relative performance for each operating frequency
-+    for (i = 0; i < 29; i++) {
-+		delta = sprintf(&str_out[offset], "%lu ",
-+				(unsigned long int) relative_performance[cpunum][i]);
-+		offset += delta;
-+	}
++   // Get CPU number
++   cpu = container_of(dev, struct cpu, dev);
++   cpunum = cpu->dev.id;
 +
-+	return sprintf(buf, "%s\n", str_out);
++   // Print the relative performance for each operating frequency
++   for (i = 0; i < 29; i++) {
++       delta = sprintf(&str_out[offset], "%lu ",
++               (unsigned long int) relative_performance[cpunum][i]);
++       offset += delta;
++   }
++
++   return sprintf(buf, "%s\n", str_out);
 +}
 +
 +/*
 + * This function is write() callback function of /sys/devices/system/cpu/[CPU ID]/rel_perf
 + */
 +static ssize_t rel_perf_store(struct device *dev,
-+		struct device_attribute *attr, const char *buf, size_t count)
++       struct device_attribute *attr, const char *buf, size_t count)
 +{
-+	struct cpu *cpu;
-+	int cpunum;
-+    int i;
-+    int ret; 
-+    int cnt = 0; 
-+    char *token;
-+    char *s;
-+    char str_rp[1000];
-+    long unsigned int int_rp[29] = {0,};
++   struct cpu *cpu;
++   int cpunum;
++   int i;
++   int ret;
++   int cnt = 0;
++   char *token;
++   char *s;
++   char str_rp[1000];
++   long unsigned int int_rp[29] = {0,};
 +
-+	// Get CPU number
-+	cpu = container_of(dev, struct cpu, dev);
-+	cpunum = cpu->dev.id;
++   // Get CPU number
++   cpu = container_of(dev, struct cpu, dev);
++   cpunum = cpu->dev.id;
 +
-+    // Read the relative performance for each operating frequency
-+    ret = sscanf(buf, "%s", str_rp);
-+    s = str_rp;
++   // Read the relative performance for each operating frequency
++   ret = sscanf(buf, "%s", str_rp);
++   s = str_rp;
 +
-+    // Split a string into tokens
-+    while ((token = strsep(&s, ",")) != NULL) {
-+        if (!*token)
-+            continue;
-+        // Convert a string to 'long unsigned int'
-+        sscanf(token, "%lu", &int_rp[cnt]);
-+        cnt++;
-+    }    
++   // Split a string into tokens
++   while ((token = strsep(&s, ",")) != NULL) {
++       if (!*token)
++           continue;
++       // Convert a string to 'long unsigned int'
++       sscanf(token, "%lu", &int_rp[cnt]);
++       cnt++;
++   }
 +
-+    // Check if the number of IBSRs == the number of available CPU frequency levels
-+    if (cnt != 29)
-+        return -EINVAL;
++   // Check if the number of IBSRs == the number of available CPU frequency levels
++   if (cnt != 29)
++       return -EINVAL;
 +
-+    // Write the input IBSR into the task_struct of current task
-+    for (i = 0; i < 29; i++) {
-+      relative_performance[cpunum][i] = (u64) int_rp[i];
-+    }    
-+    return count; 
++   // Write the input IBSR into the task_struct of current task
++   for (i = 0; i < 29; i++) {
++       relative_performance[cpunum][i] = (u64) int_rp[i];
++   }
++   return count;
 +}
++
 +static DEVICE_ATTR_RW(rel_perf);
 +
  static struct attribute *crash_note_cpu_attrs[] = {
- 	&dev_attr_crash_notes.attr,
- 	&dev_attr_crash_notes_size.attr,
-+	&dev_attr_rel_perf.attr,
- 	NULL
+    &dev_attr_crash_notes.attr,
+    &dev_attr_crash_notes_size.attr,
++   &dev_attr_rel_perf.attr,
+    NULL
  };
- 
-diff -urN kernel-4.9_default/drivers/cpufreq/cpufreq.c kernel-4.9/drivers/cpufreq/cpufreq.c
---- kernel-4.9_default/drivers/cpufreq/cpufreq.c	2020-03-22 19:22:26.201356485 +0900
-+++ kernel-4.9/drivers/cpufreq/cpufreq.c	2020-03-22 19:23:30.880118736 +0900
-@@ -890,6 +890,95 @@
- 	return ret;
+
+diff -urN kernel-4.9/drivers/cpufreq/cpufreq.c kernel-4.9_modified/drivers/cpufreq/cpufreq.c
+--- kernel-4.9/drivers/cpufreq/cpufreq.c    2018-10-30 03:41:01.000000000 +0900
++++ kernel-4.9_modified/drivers/cpufreq/cpufreq.c   2020-04-12 22:39:43.225960886 +0900
+@@ -789,13 +789,121 @@
+        return -EINVAL;
+
+    if (cpufreq_parse_governor(str_governor, &new_policy.policy,
+-                       &new_policy.governor))
++               &new_policy.governor))
+        return -EINVAL;
+
+    ret = cpufreq_set_policy(policy, &new_policy);
+    return ret ? ret : count;
  }
- 
-+extern int is_init_pmu;
+
++int is_init_pmu;
++EXPORT_SYMBOL(is_init_pmu);
 +#define ARMV8_PMEVTYPER_P              (1 << 31) /* EL1 modes filtering bit */
 +#define ARMV8_PMEVTYPER_U              (1 << 30) /* EL0 filtering bit */
 +#define ARMV8_PMEVTYPER_NSK            (1 << 29) /* Non-secure EL1 (kernel) modes filtering bit */
@@ -115,42 +125,59 @@ diff -urN kernel-4.9_default/drivers/cpufreq/cpufreq.c kernel-4.9/drivers/cpufre
 +#define ARMV8_PMCR_C            (1 << 2) /* Cycle counter reset */
 +
 +static inline void init_pmu(void) {
-+    u64 val = 0;
-+    // Start of per-core PMU profiling
-+    /* Enable user-mode access to counters. */
-+    asm volatile("msr pmuserenr_el0, %0" : : "r" ((u64)ARMV8_PMUSERENR_EN_EL0|ARMV8_PMUSERENR_ER|ARMV8_PMUSERENR_CR));
-+    /* Performance Monitors Count Enable Set register bit 30:0 disable, 31 enable. Can also enable other event counters here. */
-+    asm volatile("msr pmcntenset_el0, %0" : : "r" (ARMV8_PMCNTENSET_EL0_ENABLE));
++   u64 val = 0; 
++   // Start of per-core PMU profiling
++   /* Enable user-mode access to counters. */
++   asm volatile("msr pmuserenr_el0, %0" : : "r" ((u64)ARMV8_PMUSERENR_EN_EL0|ARMV8_PMUSERENR_ER|ARMV8_PMUSERENR_CR));
++   /* Performance Monitors Count Enable Set register bit 30:0 disable, 31 enable. Can also enable other event counters here. */
++   asm volatile("msr pmcntenset_el0, %0" : : "r" (ARMV8_PMCNTENSET_EL0_ENABLE));
 +
-+    /* Enable counters */
-+    asm volatile("mrs %0, pmcr_el0" : "=r" (val));
-+    asm volatile("msr pmcr_el0, %0" : : "r" (val|ARMV8_PMCR_E));
++   /* Enable counters */
++   asm volatile("mrs %0, pmcr_el0" : "=r" (val));
++   asm volatile("msr pmcr_el0, %0" : : "r" (val|ARMV8_PMCR_E));
 +}
 +
 +static void disable_all_pmu(void) {
-+    /*   Performance Monitors Count Enable Set register: clear bit 0 */
-+    asm volatile("msr pmcntenset_el0, %0" : : "r" (0)); // disable all pmu counters
++   /*   Performance Monitors Count Enable Set register: clear bit 0 */
++   asm volatile("msr pmcntenset_el0, %0" : : "r" (0)); // disable all pmu counters
 +}
 +
 +static inline void enable_pmu(uint32_t evtCount, uint32_t counterId) {
-+    uint32_t r = 0;
-+    evtCount &= ARMV8_PMEVTYPER_EVTCOUNT_MASK;
-+    asm volatile("isb");
++   uint32_t r = 0;
++   evtCount &= ARMV8_PMEVTYPER_EVTCOUNT_MASK;
++   asm volatile("isb");
 +
-+    asm volatile("msr pmselr_el0, %0" : : "r" (counterId)); // select counter number
++   asm volatile("msr pmselr_el0, %0" : : "r" (counterId)); // select counter number
 +
-+    asm volatile("msr pmxevtyper_el0, %0" : : "r" (evtCount));  // select event id
++   asm volatile("msr pmxevtyper_el0, %0" : : "r" (evtCount));  // select event id
 +
-+    /* enables counter */
-+    asm volatile("mrs %0, pmcntenset_el0" : "=r" (r));
-+    asm volatile("msr pmcntenset_el0, %0" : : "r" (r|(1<<counterId)));
++   /* enables counter */
++   asm volatile("mrs %0, pmcntenset_el0" : "=r" (r));
++   asm volatile("msr pmcntenset_el0, %0" : : "r" (r|(1<<counterId)));
 +}
 +
++static inline uint64_t read_pmu(uint32_t counterId) {
++   uint64_t r = 0; 
++   asm volatile("msr pmselr_el0, %0" : : "r" (counterId)); // select counter number
++   asm volatile("mrs %0, pmxevcntr_el0" : "=r" (r));   // read from counter
++   return r;
++}
++
++unsigned int read_cc_32_pmu(void) {
++   return read_pmu(0);
++}
++EXPORT_SYMBOL(read_cc_32_pmu);
++
++unsigned int read_bsc_32_pmu(void) {
++   return read_pmu(1);
++}
++EXPORT_SYMBOL(read_bsc_32_pmu);
++
 +static void init_pmu_single_core(void *data) {
-+    init_pmu();
-+    disable_all_pmu();
-+    enable_pmu(0x11, 0); // The number of CPU cycles
-+    enable_pmu(0x24, 1); // The number of backend stall cycles
++   init_pmu();
++   disable_all_pmu();
++   enable_pmu(0x11, 0); // The number of CPU cycles
++   enable_pmu(0x24, 1); // The number of backend stall cycles
 +}
 +
 +/**
@@ -158,109 +185,110 @@ diff -urN kernel-4.9_default/drivers/cpufreq/cpufreq.c kernel-4.9/drivers/cpufre
 + */
 +static ssize_t show_pmu_init(struct cpufreq_policy *policy, char *buf)
 +{
-+	if (is_init_pmu) {
-+		return sprintf(buf, "PMU is initialized\n");
-+	} else {
-+		return sprintf(buf, "PMU is not initialized\n");
-+	}
-+	return -EINVAL;
++   if (is_init_pmu) {
++       return sprintf(buf, "PMU is initialized\n");
++   } else {
++       return sprintf(buf, "PMU is not initialized\n");
++   }
++   return -EINVAL;
 +}
 +
 +/**
 + * This function initialize PMUs of all cores
 + */
 +static ssize_t store_pmu_init(struct cpufreq_policy *policy,
-+					const char *buf, size_t count)
++       const char *buf, size_t count)
 +{
-+	int ret;
-+	char str_in[100];
-+	// Read the list of ibsrs of launcher
-+	ret = sscanf(buf, "%s", str_in);
++   int ret;
++   char str_in[100];
++   // Read the list of ibsrs of launcher
++   ret = sscanf(buf, "%s", str_in);
 +
-+	if (!strcmp(str_in, "on")) {
-+		on_each_cpu(init_pmu_single_core, NULL, 1);
-+		is_init_pmu = 1;
-+		return ret;
-+	}
++   if (!strcmp(str_in, "on")) {
++       on_each_cpu(init_pmu_single_core, NULL, 1);
++       is_init_pmu = 1;
++       return ret;
++   }
 +
-+	return -EINVAL;
++   return -EINVAL;
 +}
- 
++
  /**
   * show_scaling_driver - show the cpufreq driver currently loaded
-@@ -1015,6 +1104,7 @@
+  */
+@@ -918,6 +1026,7 @@
+ cpufreq_freq_attr_rw(scaling_max_freq);
+ cpufreq_freq_attr_rw(scaling_governor);
  cpufreq_freq_attr_rw(scaling_setspeed);
- cpufreq_freq_attr_rw(ibsr);
- cpufreq_freq_attr_rw(rel_pf);
 +cpufreq_freq_attr_rw(pmu_init);
- 
+
  static struct attribute *default_attrs[] = {
- 	&cpuinfo_min_freq.attr,
-@@ -1030,6 +1120,7 @@
- 	&scaling_setspeed.attr,
- 	&ibsr.attr,
- 	&rel_pf.attr,
-+	&pmu_init.attr,
- 	NULL
+    &cpuinfo_min_freq.attr,
+@@ -931,6 +1040,7 @@
+    &scaling_driver.attr,
+    &scaling_available_governors.attr,
+    &scaling_setspeed.attr,
++   &pmu_init.attr,
+    NULL
  };
- 
-diff -urN kernel-4.9_default/fs/proc/base.c kernel-4.9/fs/proc/base.c
---- kernel-4.9_default/fs/proc/base.c	2020-02-24 21:00:08.000000000 +0900
-+++ kernel-4.9/fs/proc/base.c	2020-03-22 19:07:33.161811620 +0900
-@@ -1583,6 +1583,160 @@
- 	.release	= single_release,
+
+diff -urN kernel-4.9/fs/proc/base.c kernel-4.9_modified/fs/proc/base.c
+--- kernel-4.9/fs/proc/base.c   2018-10-30 03:41:05.000000000 +0900
++++ kernel-4.9_modified/fs/proc/base.c  2020-04-12 20:52:27.458442500 +0900
+@@ -1583,6 +1583,98 @@
+    .release    = single_release,
  };
- 
+
 +/*
 + * This function is write() callback function of /proc/[pid]/ibsr
 + */
 +static ssize_t ibsr_write(struct file *file, const char __user *buf,
-+				size_t count, loff_t *offset)
++       size_t count, loff_t *offset)
 +{
-+	int i;
-+    int cnt = 0;
-+    char *token;
-+    char *s;
-+    long unsigned int int_ibsr[29] = {0,};
-+	struct inode *inode = file_inode(file);
-+	struct task_struct *p;
-+	char str_ibsr[1800];
-+	const size_t maxlen = sizeof(str_ibsr) - 1;
-+	
-+	memset(str_ibsr, 0, sizeof(str_ibsr));
++   int i;
++   int cnt = 0; 
++   char *token;
++   char *s;
++   long unsigned int int_ibsr[29] = {0,};
++   struct inode *inode = file_inode(file);
++   struct task_struct *p;
++   char str_ibsr[1800];
++   const size_t maxlen = sizeof(str_ibsr) - 1; 
 +
-+	// Read the IBSR for each operating frequency
-+	if (copy_from_user(str_ibsr, buf, count > maxlen ? maxlen : count))
-+		return -EFAULT;
++   memset(str_ibsr, 0, sizeof(str_ibsr));
 +
-+	// Get task_struct
-+	p = get_proc_task(inode);
-+	if (!p)
-+		return -ESRCH;
++   // Read the IBSR for each operating frequency
++   if (copy_from_user(str_ibsr, buf, count > maxlen ? maxlen : count))
++       return -EFAULT;
 +
-+    s = str_ibsr;
++   // Get task_struct
++   p = get_proc_task(inode);
++   if (!p) 
++       return -ESRCH;
 +
-+    // Split a string into tokens
-+    while ((token = strsep(&s, ",")) != NULL) {
-+        if (!*token)
-+            continue;
-+        // Convert a string to 'long unsigned int'
-+        sscanf(token, "%lu", &int_ibsr[cnt]);
-+        cnt++;
-+    }
++   s = str_ibsr;
 +
-+    // Check if the number of IBSRs == the number of available CPU frequency levels
-+    if (cnt != 29)
-+        return -EINVAL;
++   // Split a string into tokens
++   while ((token = strsep(&s, ",")) != NULL) {
++       if (!*token)
++           continue;
++       // Convert a string to 'long unsigned int'
++       sscanf(token, "%lu", &int_ibsr[cnt]);
++       cnt++;
++   }
 +
-+    // Write the input IBSR into the task_struct of current task
-+    for (i = 0; i < 29; i++) {
-+        p->ibsr[i] = (u64) int_ibsr[i];
-+    }
++   // Check if the number of IBSRs == the number of available CPU frequency levels
++   if (cnt != 29)
++       return -EINVAL;
++   // Write the input IBSR into the task_struct of current task
++   for (i = 0; i < 29; i++) {
++       p->ibsr[i] = (u64) int_ibsr[i];
++   }
++   p->is_qos = 1;
 +
-+	put_task_struct(p);
++   put_task_struct(p);
 +
-+	return count;
++   return count;
 +}
 +
 +/*
@@ -268,273 +296,183 @@ diff -urN kernel-4.9_default/fs/proc/base.c kernel-4.9/fs/proc/base.c
 + */
 +static int ibsr_show(struct seq_file *m, void *v)
 +{
-+	int i;
-+	struct inode *inode = m->private;
-+	struct task_struct *p;
++   int i;
++   struct inode *inode = m->private;
++   struct task_struct *p;
 +
-+	// Get task_struct
-+	p = get_proc_task(inode);
-+	if (!p)
-+		return -ESRCH;
++   // Get task_struct
++   p = get_proc_task(inode);
++   if (!p)
++       return -ESRCH;
 +
-+	task_lock(p);
-+	// Print the IBSR for each operating frequency
-+    for (i = 0; i < 29; i++) {
-+		seq_printf(m, "%lu ", (unsigned long int) p->ibsr[i]);
-+    }
-+	seq_printf(m, "\n");
-+	task_unlock(p);
++   task_lock(p);
++   // Print the IBSR for each operating frequency
++   for (i = 0; i < 29; i++) {
++       seq_printf(m, "%lu ", (unsigned long int) p->ibsr[i]);
++   }
++   seq_printf(m, "\n");
++   task_unlock(p);
 +
-+	put_task_struct(p);
++   put_task_struct(p);
 +
-+	return 0;
++   return 0;
 +}
 +
 +static int ibsr_open(struct inode *inode, struct file *filp)
 +{
-+	return single_open(filp, ibsr_show, inode);
++   return single_open(filp, ibsr_show, inode);
 +}
 +
 +static const struct file_operations proc_ibsr_operations = {
-+	.open		= ibsr_open,
-+	.read		= seq_read,
-+	.write		= ibsr_write,
-+	.llseek		= seq_lseek,
-+	.release	= single_release,
-+};
-+
-+/*
-+ * This function is write() callback function of /proc/[pid]/is_trace_sched_tick
-+ */
-+static ssize_t is_trace_sched_tick_write(struct file *file, const char __user *buf,
-+		size_t count, loff_t *offset)
-+{
-+	struct inode *inode = file_inode(file);
-+	struct task_struct *p;
-+
-+	unsigned int val;
-+	int ret;
-+	ret= kstrtouint_from_user(buf, count, 0, &val);
-+
-+	// Get task_struct
-+	p = get_proc_task(inode);
-+	if (!p)
-+		return -ESRCH;
-+
-+	if (val == 1) {
-+		p->is_trace_sched_tick = 1;
-+	}
-+	printk("RTOS || is_trace_sched_tick ON\n");
-+	put_task_struct(p);
-+
-+	return count;
-+}
-+
-+/*
-+ * This function is read() callback function of /proc/[pid]/is_trace_sched_tick
-+ */
-+static int is_trace_sched_tick_show(struct seq_file *m, void *v)
-+{
-+	struct inode *inode = m->private;
-+	struct task_struct *p;
-+
-+	// Get task_struct
-+	p = get_proc_task(inode);
-+	if (!p)
-+		return -ESRCH;
-+
-+	task_lock(p);
-+	seq_printf(m, "%lu ", (unsigned long int) p->is_trace_sched_tick);
-+	seq_printf(m, "\n");
-+	task_unlock(p);
-+
-+	put_task_struct(p);
-+
-+	return 0;
-+}
-+
-+static int is_trace_sched_tick_open(struct inode *inode, struct file *filp) {
-+	return single_open(filp, is_trace_sched_tick_show, inode);
-+}
-+
-+static const struct file_operations proc_is_trace_sched_tick_operations = {
-+	.open       = is_trace_sched_tick_open,
-+	.read       = seq_read,
-+	.write      = is_trace_sched_tick_write,
-+	.llseek     = seq_lseek,
-+	.release    = single_release,
++   .open       = ibsr_open,
++   .read       = seq_read,
++   .write      = ibsr_write,
++   .llseek     = seq_lseek,
++   .release    = single_release,
 +};
 +
  static int proc_exe_link(struct dentry *dentry, struct path *exe_path)
  {
- 	struct task_struct *task;
-@@ -3129,6 +3283,8 @@
- 	REG("weight",	  S_IRUGO|S_IWUSR, proc_task_weight_operations),
- 	REG("largest_task", S_IRUGO, proc_largest_task_operations),
+    struct task_struct *task;
+@@ -3517,6 +3609,7 @@
+    REG("weight", S_IRUGO|S_IWUSR, proc_task_weight_operations),
+    REG("largest_task", S_IRUGO, proc_largest_task_operations),
  #endif
-+	REG("ibsr", S_IRUGO|S_IWUSR, proc_ibsr_operations),
-+	REG("is_trace_sched_tick", S_IRUGO|S_IWUSR, proc_is_trace_sched_tick_operations),
++   REG("ibsr", S_IRUGO|S_IWUSR, proc_ibsr_operations),
  };
- 
- static int proc_tgid_base_readdir(struct file *file, struct dir_context *ctx)
-diff -urN kernel-4.9_default/include/linux/sched.h kernel-4.9/include/linux/sched.h
---- kernel-4.9_default/include/linux/sched.h	2020-02-24 21:01:00.000000000 +0900
-+++ kernel-4.9/include/linux/sched.h	2020-03-22 19:09:50.867402217 +0900
+
+ static int proc_tid_base_readdir(struct file *file, struct dir_context *ctx)
+diff -urN kernel-4.9/include/linux/sched.h kernel-4.9_modified/include/linux/sched.h
+--- kernel-4.9/include/linux/sched.h    2018-10-30 03:41:05.000000000 +0900
++++ kernel-4.9_modified/include/linux/sched.h   2020-04-12 21:10:50.755338572 +0900
 @@ -2129,6 +2129,8 @@
- 	/* A live task holds one reference. */
- 	atomic_t stack_refcount;
+    /* A live task holds one reference. */
+    atomic_t stack_refcount;
  #endif
-+	u64 ibsr[29]; // 0 <= gamma <= 10000
-+	int is_trace_sched_tick;
++   u64 ibsr[29];
++   u64 is_qos;
  /* CPU-specific state of this task */
- 	struct thread_struct thread;
+    struct thread_struct thread;
  /*
-diff -urN kernel-4.9_default/kernel/exit.c kernel-4.9/kernel/exit.c
---- kernel-4.9_default/kernel/exit.c	2020-03-22 19:19:08.773112333 +0900
-+++ kernel-4.9/kernel/exit.c	2020-03-22 19:18:42.197614821 +0900
-@@ -821,6 +821,10 @@
- 
- 	if (group_dead)
- 		acct_process();
-+	if(current->is_trace_sched_tick == 1) {
-+		printk("RTOS || %d\t%s\t%llu\n",
-+				current->pid, current->comm, current->num_sched_tick);
-+	}
- 	trace_sched_process_exit(tsk);
- 
- 	exit_sem(tsk);
-diff -urN kernel-4.9_default/kernel/fork.c kernel-4.9/kernel/fork.c
---- kernel-4.9_default/kernel/fork.c	2020-02-24 21:01:22.000000000 +0900
-+++ kernel-4.9/kernel/fork.c	2020-03-22 19:10:46.986400542 +0900
-@@ -1478,6 +1478,7 @@
+diff -urN kernel-4.9/kernel/fork.c kernel-4.9_modified/kernel/fork.c
+--- kernel-4.9/kernel/fork.c    2018-10-30 03:41:06.000000000 +0900
++++ kernel-4.9_modified/kernel/fork.c   2020-04-12 21:13:09.092450495 +0900
+@@ -1476,6 +1476,7 @@
+                    unsigned long tls,
+                    int node)
  {
- 	int retval;
- 	struct task_struct *p;
-+	int i = 0;
- 
- 	if ((clone_flags & (CLONE_NEWNS|CLONE_FS)) == (CLONE_NEWNS|CLONE_FS))
- 		return ERR_PTR(-EINVAL);
++   int i;
+    int retval;
+    struct task_struct *p;
+
 @@ -1587,6 +1588,12 @@
- 
- 	p->default_timer_slack_ns = current->timer_slack_ns;
- 
-+	// Inherit the IBSR from the parent task
-+	for (i = 0; i < 29; i++) {
-+		p->ibsr[i] = current->ibsr[i];
-+	}
-+	p->is_trace_sched_tick = current->is_trace_sched_tick;
+
+    p->default_timer_slack_ns = current->timer_slack_ns;
+
++   // Inherit the IBSR from the parent task
++   for (i = 0; i < 29; i++) {
++       p->ibsr[i] = current->ibsr[i];
++   }
++   p->is_qos = current->is_qos;
 +
- 	task_io_accounting_init(&p->ioac);
- 	acct_clear_integrals(p);
- 
-diff -urN kernel-4.9_default/kernel/sched/fair.c kernel-4.9/kernel/sched/fair.c
---- kernel-4.9_default/kernel/sched/fair.c	2020-02-24 21:02:12.000000000 +0900
-+++ kernel-4.9/kernel/sched/fair.c	2020-03-22 19:08:47.932512603 +0900
-@@ -32,6 +32,8 @@
+    task_io_accounting_init(&p->ioac);
+    acct_clear_integrals(p);
+
+diff -urN kernel-4.9/kernel/sched/fair.c kernel-4.9_modified/kernel/sched/fair.c
+--- kernel-4.9/kernel/sched/fair.c  2020-04-12 19:17:18.113494082 +0900
++++ kernel-4.9_modified/kernel/sched/fair.c 2020-04-12 21:16:57.611677993 +0900
+@@ -31,6 +31,7 @@
+ #include <linux/migrate.h>
  #include <linux/task_work.h>
  #include <linux/module.h>
- 
 +#include <linux/cpufreq.h>
-+
+
  #include <trace/events/sched.h>
- 
- #include "sched.h"
-@@ -866,11 +868,283 @@
+
+@@ -866,11 +867,269 @@
  }
  #endif /* CONFIG_SMP */
- 
+
 +unsigned int prev_cc[8] = {0,};
 +unsigned int prev_bsc[8] = {0,};
 +unsigned int delta_cc[8] = {0,};
 +unsigned int delta_bsc[8] = {0,};
 +
-+// 0, 1, 2: CFS, SVR-CFS, ASVR-CFS (=mCFS)
-+extern int mode_cfs;
 +extern int is_init_pmu;
++extern unsigned int read_cc_32_pmu(void);
++extern unsigned int read_bsc_32_pmu(void);
 +
-+static inline uint64_t read_pmu(uint32_t counterId) {
-+    uint64_t r = 0;
-+    asm volatile("msr pmselr_el0, %0" : : "r" (counterId)); // select counter number
-+    asm volatile("mrs %0, pmxevcntr_el0" : "=r" (r));   // read from counter
-+    return r;
-+}
-+unsigned int read_cc_32_pmu(void) {
-+    return read_pmu(0);
-+}
-+unsigned int read_bsc_32_pmu(void) {
-+    return read_pmu(1);
-+}
 +/*
 + * This function returns the current operating frequency index of this CPU core
 + * Input: none
 + * Output: current operating frequency index
 + */
 +int cpufreq_quick_get_idx(void) {
-+	int ret;
-+	unsigned int cpufreq;
-+	cpufreq = cpufreq_quick_get(smp_processor_id());
-+	if (cpufreq == 2265600) {
-+		ret = 28;
-+	} else if (cpufreq == 2188800) {
-+		ret = 27;
-+	} else if (cpufreq == 2112000) {
-+		ret = 26;
-+	} else if (cpufreq == 2035200) {
-+		ret = 25;
-+	} else if (cpufreq == 1958400) {
-+		ret = 24;
-+	} else if (cpufreq == 1881600) {
-+		ret = 23;
-+	} else if (cpufreq == 1804800) {
-+		ret = 22;
-+	} else if (cpufreq == 1728000) {
-+		ret = 21;
-+	} else if (cpufreq == 1651200) {
-+		ret = 20;
-+	} else if (cpufreq == 1574400) {
-+		ret = 19;
-+	} else if (cpufreq == 1497600) {
-+		ret = 18;
-+	} else if (cpufreq == 1420800) {
-+		ret = 17;
-+	} else if (cpufreq == 1344000) {
-+		ret = 16;
-+	} else if (cpufreq == 1267200) {
-+		ret = 15;
-+	} else if (cpufreq == 1190400) {
-+		ret = 14;
-+	} else if (cpufreq == 1113600) {
-+		ret = 13;
-+	} else if (cpufreq == 1036800) {
-+		ret = 12;
-+	} else if (cpufreq == 960000) {
-+		ret = 11;
-+	} else if (cpufreq == 883200) {
-+		ret = 10;
-+	} else if (cpufreq == 806400) {
-+		ret = 9;
-+	} else if (cpufreq == 729600) {
-+		ret = 8;
-+	} else if (cpufreq == 652800) {
-+		ret = 7;
-+	} else if (cpufreq == 576000) {
-+		ret = 6;
-+	} else if (cpufreq == 499200) {
-+		ret = 5;
-+	} else if (cpufreq == 422400) {
-+		ret = 4;
-+	} else if (cpufreq == 345600) {
-+		ret = 3;
-+	} else if (cpufreq == 268800) {
-+		ret = 2;
-+	} else if (cpufreq == 192000) {
-+		ret = 1;
-+	} else if (cpufreq == 115200) {
-+		ret = 0;
-+	} else {
-+		ret = 28;
-+	}
-+	return ret;
++   int ret;
++   unsigned int cpufreq;
++   cpufreq = cpufreq_quick_get(smp_processor_id());
++   if (cpufreq == 2265600) {
++       ret = 28;
++   } else if (cpufreq == 2188800) {
++       ret = 27;
++   } else if (cpufreq == 2112000) {
++       ret = 26;
++   } else if (cpufreq == 2035200) {
++       ret = 25;
++   } else if (cpufreq == 1958400) {
++       ret = 24;
++   } else if (cpufreq == 1881600) {
++       ret = 23;
++   } else if (cpufreq == 1804800) {
++       ret = 22;
++   } else if (cpufreq == 1728000) {
++       ret = 21;
++   } else if (cpufreq == 1651200) {
++       ret = 20;
++   } else if (cpufreq == 1574400) {
++       ret = 19;
++   } else if (cpufreq == 1497600) {
++       ret = 18;
++   } else if (cpufreq == 1420800) {
++       ret = 17;
++   } else if (cpufreq == 1344000) {
++       ret = 16;
++   } else if (cpufreq == 1267200) {
++       ret = 15;
++   } else if (cpufreq == 1190400) {
++       ret = 14;
++   } else if (cpufreq == 1113600) {
++       ret = 13;
++   } else if (cpufreq == 1036800) {
++       ret = 12;
++   } else if (cpufreq == 960000) {
++       ret = 11;
++   } else if (cpufreq == 883200) {
++       ret = 10;
++   } else if (cpufreq == 806400) {
++       ret = 9;
++   } else if (cpufreq == 729600) {
++       ret = 8;
++   } else if (cpufreq == 652800) {
++       ret = 7;
++   } else if (cpufreq == 576000) {
++       ret = 6;
++   } else if (cpufreq == 499200) {
++       ret = 5;
++   } else if (cpufreq == 422400) {
++       ret = 4;
++   } else if (cpufreq == 345600) {
++       ret = 3;
++   } else if (cpufreq == 268800) {
++       ret = 2;
++   } else if (cpufreq == 192000) {
++       ret = 1;
++   } else if (cpufreq == 115200) {
++       ret = 0;
++   } else {
++       ret = 28;
++   }
++   return ret;
 +}
 +
 +extern u64 relative_performance[8][29];
@@ -545,81 +483,81 @@ diff -urN kernel-4.9_default/kernel/sched/fair.c kernel-4.9/kernel/sched/fair.c
 + * Output: time * relative performance
 + */
 +u64 calc_scaled_time(u64 input_time) {
-+	u64 ret;
-+	u64 rf_idx = 0;
-+	unsigned int cpufreq;
-+	unsigned int cpu_id = smp_processor_id();
++   u64 ret;
++   u64 rf_idx = 0;
++   unsigned int cpufreq;
++   unsigned int cpu_id = smp_processor_id();
 +
-+	cpufreq = cpufreq_quick_get(smp_processor_id());
-+	if (cpufreq == 2265600) {
-+		rf_idx = 28;
-+	} else if (cpufreq == 2188800) {
-+		rf_idx = 27;
-+	} else if (cpufreq == 2112000) {
-+		rf_idx = 26;
-+	} else if (cpufreq == 2035200) {
-+		rf_idx = 25;
-+	} else if (cpufreq == 1958400) {
-+		rf_idx = 24;
-+	} else if (cpufreq == 1881600) {
-+		rf_idx = 23;
-+	} else if (cpufreq == 1804800) {
-+		rf_idx = 22;
-+	} else if (cpufreq == 1728000) {
-+		rf_idx = 21;
-+	} else if (cpufreq == 1651200) {
-+		rf_idx = 20;
-+	} else if (cpufreq == 1574400) {
-+		rf_idx = 19;
-+	} else if (cpufreq == 1497600) {
-+		rf_idx = 18;
-+	} else if (cpufreq == 1420800) {
-+		rf_idx = 17;
-+	} else if (cpufreq == 1344000) {
-+		rf_idx = 16;
-+	} else if (cpufreq == 1267200) {
-+		rf_idx = 15;
-+	} else if (cpufreq == 1190400) {
-+		rf_idx = 14;
-+	} else if (cpufreq == 1113600) {
-+		rf_idx = 13;
-+	} else if (cpufreq == 1036800) {
-+		rf_idx = 12;
-+	} else if (cpufreq == 960000) {
-+		rf_idx = 11;
-+	} else if (cpufreq == 883200) {
-+		rf_idx = 10;
-+	} else if (cpufreq == 806400) {
-+		rf_idx = 9;
-+	} else if (cpufreq == 729600) {
-+		rf_idx = 8;
-+	} else if (cpufreq == 652800) {
-+		rf_idx = 7;
-+	} else if (cpufreq == 576000) {
-+		rf_idx = 6;
-+	} else if (cpufreq == 499200) {
-+		rf_idx = 5;
-+	} else if (cpufreq == 422400) {
-+		rf_idx = 4;
-+	} else if (cpufreq == 345600) {
-+		rf_idx = 3;
-+	} else if (cpufreq == 268800) {
-+		rf_idx = 2;
-+	} else if (cpufreq == 192000) {
-+		rf_idx = 1;
-+	} else if (cpufreq == 115200) {
-+		rf_idx = 0;
-+	} else {
-+		rf_idx = 0;
-+	}
++   cpufreq = cpufreq_quick_get(smp_processor_id());
++   if (cpufreq == 2265600) {
++       rf_idx = 28;
++   } else if (cpufreq == 2188800) {
++       rf_idx = 27;
++   } else if (cpufreq == 2112000) {
++       rf_idx = 26;
++   } else if (cpufreq == 2035200) {
++       rf_idx = 25;
++   } else if (cpufreq == 1958400) {
++       rf_idx = 24;
++   } else if (cpufreq == 1881600) {
++       rf_idx = 23;
++   } else if (cpufreq == 1804800) {
++       rf_idx = 22;
++   } else if (cpufreq == 1728000) {
++       rf_idx = 21;
++   } else if (cpufreq == 1651200) {
++       rf_idx = 20;
++   } else if (cpufreq == 1574400) {
++       rf_idx = 19;
++   } else if (cpufreq == 1497600) {
++       rf_idx = 18;
++   } else if (cpufreq == 1420800) {
++       rf_idx = 17;
++   } else if (cpufreq == 1344000) {
++       rf_idx = 16;
++   } else if (cpufreq == 1267200) {
++       rf_idx = 15;
++   } else if (cpufreq == 1190400) {
++       rf_idx = 14;
++   } else if (cpufreq == 1113600) {
++       rf_idx = 13;
++   } else if (cpufreq == 1036800) {
++       rf_idx = 12;
++   } else if (cpufreq == 960000) {
++       rf_idx = 11;
++   } else if (cpufreq == 883200) {
++       rf_idx = 10;
++   } else if (cpufreq == 806400) {
++       rf_idx = 9;
++   } else if (cpufreq == 729600) {
++       rf_idx = 8;
++   } else if (cpufreq == 652800) {
++       rf_idx = 7;
++   } else if (cpufreq == 576000) {
++       rf_idx = 6;
++   } else if (cpufreq == 499200) {
++       rf_idx = 5;
++   } else if (cpufreq == 422400) {
++       rf_idx = 4;
++   } else if (cpufreq == 345600) {
++       rf_idx = 3;
++   } else if (cpufreq == 268800) {
++       rf_idx = 2;
++   } else if (cpufreq == 192000) {
++       rf_idx = 1;
++   } else if (cpufreq == 115200) {
++       rf_idx = 0;
++   } else {
++       rf_idx = 0;
++   }
 +
-+	if ((cpu_id < 0) || (cpu_id > 7)) {
-+		return input_time;
-+	}
++   if ((cpu_id < 0) || (cpu_id > 7)) {
++       return input_time;
++   }
 +
-+	// Calculate the scaled time
-+	ret = input_time * relative_performance[cpu_id][rf_idx] / 10000;
-+	return ret;
++   // Calculate the scaled time
++   ret = input_time * relative_performance[cpu_id][rf_idx] / 10000;
++   return ret;
 +}
 +
 +/*
@@ -628,21 +566,21 @@ diff -urN kernel-4.9_default/kernel/sched/fair.c kernel-4.9/kernel/sched/fair.c
 + * Output: 0 (not valid counts), 1 (valid counts)
 + */
 +int is_valid_cc_bsc(unsigned int cpu_id) {
-+	unsigned int cc, bsc;
++   unsigned int cc, bsc;
 +
-+	// Read the last CPU cycle and backend stall cycle counts
-+	cc = delta_cc[cpu_id];
-+	bsc = delta_bsc[cpu_id];
++   // Read the last CPU cycle and backend stall cycle counts
++   cc = delta_cc[cpu_id];
++   bsc = delta_bsc[cpu_id];
 +
-+	if ((cc == 0) || (bsc == 0))
-+		return 0;
++   if ((cc == 0) || (bsc == 0))
++       return 0;
 +
-+	if (cc < bsc)
-+		return 0;
++   if (cc < bsc)
++       return 0;
 +
-+	if ((cc > 10000000) || (bsc > 10000000))
-+		return 0;
-+	return 1;
++   if ((cc > 10000000) || (bsc > 10000000))
++       return 0;
++   return 1;
 +}
 +
 +/*
@@ -651,63 +589,62 @@ diff -urN kernel-4.9_default/kernel/sched/fair.c kernel-4.9/kernel/sched/fair.c
 + * Output: time * effective CPU cycle counts / CPU cycle counts
 + */
 +u64 calc_actualized_time(u64 input_time, u64 pcpu_time) {
-+	unsigned int cpu_id = smp_processor_id();
-+	u64 intrinsic_bsc;
-+	u64 measured_bsc;
-+	u64 mem_related_bsc;
-+	u64 measured_cc;
-+	u64 effective_cc;
-+	u64 ret;
-+
-+	if (is_valid_cc_bsc(cpu_id)) {
-+		// Calculate intrinsic backend stall cycle counts by using IBSR
-+		intrinsic_bsc = ((u64)current->ibsr[cpufreq_quick_get_idx()]) * pcpu_time / (u64)1000;
-+		// Read the backend stall cycle counts from PMU
-+		measured_bsc = (u64) delta_bsc[cpu_id];
-+		
-+		// Calculate the genuine memory-related intererence backend stall cycle counts
-+		mem_related_bsc = measured_bsc - intrinsic_bsc;
-+
-+		// Read the CPU cycle counts from PMU
-+		measured_cc = (u64) delta_cc[cpu_id];
-+
-+		// Calculate effective CPU cycle counts
-+		effective_cc = measured_cc - mem_related_bsc;
-+
-+		// Calculate the actualized time
-+		ret = input_time * effective_cc / measured_cc;
-+		return ret;
-+	}
-+	return input_time;
++   unsigned int cpu_id = smp_processor_id();
++   u64 intrinsic_bsc;
++   u64 measured_bsc;
++   u64 mem_related_bsc;
++   u64 measured_cc;
++   u64 effective_cc;
++   u64 ret;
++   if (is_valid_cc_bsc(cpu_id)) {
++       // Calculate intrinsic backend stall cycle counts by using IBSR
++       intrinsic_bsc = ((u64)current->ibsr[cpufreq_quick_get_idx()]) * pcpu_time / (u64)1000;
++       // Read the backend stall cycle counts from PMU
++       measured_bsc = (u64) delta_bsc[cpu_id];
++       // Calculate the genuine memory-related intererence backend stall cycle counts
++       mem_related_bsc = measured_bsc - intrinsic_bsc;
++       // Read the CPU cycle counts from PMU
++       measured_cc = (u64) delta_cc[cpu_id];
++       // Calculate effective CPU cycle counts
++       effective_cc = measured_cc - mem_related_bsc;
++       // Calculate the actualized time
++       ret = input_time * effective_cc / measured_cc;
++       return ret;
++   }
++   return input_time;
 +}
 +
 +/*
 + * This function updates CPU cycle and backend stall cycle counts
 + */
 +void update_cc_bsc(struct cfs_rq * cfs_rq, struct task_struct * curtask) {
-+	unsigned int cpu_id = smp_processor_id();
-+	unsigned int cur_cc = 0;
-+	unsigned int cur_bsc = 0;
++   unsigned int cpu_id = smp_processor_id();
++   unsigned int cur_cc = 0;
++   unsigned int cur_bsc = 0;
 +
-+	if (likely(is_init_pmu)) {
-+		// Read current CPU cycle and backend stall cycle counts from PMU
-+		cur_cc = read_cc_32_pmu();
-+		cur_bsc = read_bsc_32_pmu();
++   if (likely(is_init_pmu)) {
++       // Read current CPU cycle and backend stall cycle counts from PMU
++       cur_cc = read_cc_32_pmu();
++       cur_bsc = read_bsc_32_pmu();
 +
-+		if (curtask->ibsr) {
-+			// If a current task is QoS task, updates the counts
-+			delta_cc[cpu_id] = cur_cc - prev_cc[cpu_id];
-+			delta_bsc[cpu_id] = cur_bsc - prev_bsc[cpu_id];
-+		} else {
-+			// If a current task is best-effor task, set 0
-+			delta_cc[cpu_id] = 0;
-+			delta_bsc[cpu_id] = 0;
-+		}
++       if (curtask->is_qos) {
++           // If a current task is QoS task, updates the counts
++           delta_cc[cpu_id] = cur_cc - prev_cc[cpu_id];
++           delta_bsc[cpu_id] = cur_bsc - prev_bsc[cpu_id];
++       } else {
++           // If a current task is best-effort task, set 0
++           delta_cc[cpu_id] = 0;
++           delta_bsc[cpu_id] = 0;
++       }
 +
-+		// Update previous CPU cycle and backend stall cycle counts
-+		prev_cc[cpu_id] = cur_cc;
-+		prev_bsc[cpu_id] = cur_bsc;
-+	}
++       // Update previous CPU cycle and backend stall cycle counts
++       prev_cc[cpu_id] = cur_cc;
++       prev_bsc[cpu_id] = cur_bsc;
++
++       if (delta_cc[cpu_id] < delta_bsc[cpu_id]) {
++           delta_cc[cpu_id] = delta_bsc[cpu_id] + 1;
++       }
++   }
 +}
 +
  /*
@@ -715,75 +652,46 @@ diff -urN kernel-4.9_default/kernel/sched/fair.c kernel-4.9/kernel/sched/fair.c
   */
  static void update_curr(struct cfs_rq *cfs_rq)
  {
-+	u64 delta_vr = 0;
-+	u64 vr = 0;
-+	u64 svr = 0;
-+	u64 asvr = 0;
-+	unsigned int cpu_id = smp_processor_id();
- 	struct sched_entity *curr = cfs_rq->curr;
- 	u64 now = rq_clock_task(rq_of(cfs_rq));
- 	u64 delta_exec;
-@@ -890,6 +1164,52 @@
- 	curr->sum_exec_runtime += delta_exec;
- 	schedstat_add(cfs_rq->exec_clock, delta_exec);
- 
-+	// Scheduling tick handler updates virtual runtime of a current task and its cgroups
-+	// For a given cgroup hierarchy, update_curr() is invoked many times.
-+	// In the first step, update_curr() is invoked for a current 'task'.
-+	// After that, update_curr() is invoked again for its cgroups.
-+	// In this situation, PMU should be updated once for a given scheduling tick.
-+	// To do so, mCFS updates PMU when update_curr() is invoked for a current 'task'.
++   u64 delta_vr = 0;
++   u64 vr = 0;
++   u64 svr = 0;
++   u64 asvr = 0;
+    struct sched_entity *curr = cfs_rq->curr;
+    u64 now = rq_clock_task(rq_of(cfs_rq));
+    u64 delta_exec;
+@@ -885,12 +1144,33 @@
+    curr->exec_start = now;
+
+    schedstat_set(curr->statistics.exec_max,
+-             max(delta_exec, curr->statistics.exec_max));
++           max(delta_exec, curr->statistics.exec_max));
+
+    curr->sum_exec_runtime += delta_exec;
+    schedstat_add(cfs_rq->exec_clock, delta_exec);
+
+-   curr->vruntime += calc_delta_fair(delta_exec, curr);
++   // Scheduling tick handler updates virtual runtime of a current task and its cgroups
++   // For a given cgroup hierarchy, update_curr() is invoked many times.
++   // In the first step, update_curr() is invoked for a current 'task'.
++   // After that, update_curr() is invoked again for its cgroups.
++   // In this situation, PMU should be updated once for a given scheduling tick.
++   // To do so, mCFS updates PMU when update_curr() is invoked for a current 'task'.
 +
-+	// Check whether sched_entity 'curr' is task or not.
-+	if (entity_is_task(curr)) {
-+		struct task_struct *curtask = task_of(curr);
-+		update_cc_bsc(cfs_rq, curtask);
-+	}
++   // calc_actualized_time(): added function for mCFS
++   // calc_scaled_time(): added function for mCFS
++   // calc_delta_fair(): original function
 +
++   if (entity_is_task(curr)) {
++       // Check whether sched_entity 'curr' is task or not.
++       struct task_struct *curtask = task_of(curr);
++       update_cc_bsc(cfs_rq, curtask);
++   }
++   vr = calc_delta_fair(delta_exec, curr);
++   svr = calc_scaled_time(vr);
++   asvr = calc_actualized_time(svr, delta_exec);
++   delta_vr = asvr;
++   curr->vruntime += delta_vr;
 +
-+	// mode_cfs == 2: ASVR-CFS (=mCFS)
-+	// mode_cfs == 1: SVR-CFS
-+	// mode_cfs == 0: Original CFS
-+
-+	// calc_actualized_time(): added function for mCFS
-+	// calc_scaled_time(): added function for mCFS
-+	// calc_delta_fair(): original function
-+	
-+	u64 act, asct, asvr, sct, svr, vr;
-+	if (likely(is_init_pmu)) {
-+		if (likely(mode_cfs == 2)) {
-+			// Calculate actualized CPU time
-+			act = calc_actualized_time(delta_exec, delta_exec);
-+			// Calculate actualized scaled CPU time
-+			asct = calc_scaled_time(act);
-+			// Calculate actualized scaled virtual runtime
-+			asvr = cacl_delta_fair(asct, curr);
-+			delta_vr = asvr;
-+		} else if (mode_cfs == 1) {
-+			// Calculate scaled CPU time
-+			sct = calc_scaled_time(delta_exec);
-+			// Calculate scaled virtual runtime
-+			svr = calc_delta_fair(sct, curr);
-+			delta_vr = svr;
-+		} else {
-+			// Use default virtual runtime
-+			vr = calc_delta_fair(delta_exec, curr);
-+			delta_vr = vr;
-+		}
-+	}
-+
-+	curr->vruntime += delta_vr;
- 	update_min_vruntime(cfs_rq);
- 
- 	if (entity_is_task(curr)) {
-@@ -10535,6 +10855,10 @@
- 	struct cfs_rq *cfs_rq;
- 	struct sched_entity *se = &curr->se;
- 
-+	if (curr->is_trace_sched_tick) {
-+		curr->num_sched_tick++;
-+	}
-+
- 	for_each_sched_entity(se) {
- 		cfs_rq = cfs_rq_of(se);
- 		entity_tick(cfs_rq, se, queued);
+    update_min_vruntime(cfs_rq);
+
+    if (entity_is_task(curr)) {
